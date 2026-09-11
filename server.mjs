@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 import fs from 'fs';
 import crypto from 'crypto';
 import dotenv from 'dotenv';
+import { onRequest as handleGimyCatalogRequest } from './functions/gimy-catalog.js';
 
 dotenv.config();
 
@@ -94,6 +95,13 @@ app.get('/s=:keyword', async (req, res) => {
   }
 });
 
+app.get('/gimy-catalog', async (req, res) => {
+  const requestUrl = `${req.protocol}://${req.get('host')}${req.originalUrl}`;
+  const response = await handleGimyCatalogRequest({ request: new Request(requestUrl) });
+  response.headers.forEach((value, key) => res.setHeader(key, value));
+  res.status(response.status).send(await response.text());
+});
+
 function isValidUrl(urlString) {
   try {
     const parsed = new URL(urlString);
@@ -175,6 +183,14 @@ app.get('/proxy/:encodedUrl', async (req, res) => {
     // 添加请求超时和重试逻辑
     const maxRetries = config.maxRetries;
     let retries = 0;
+    const targetHostname = new URL(targetUrl).hostname;
+    const requestHeaders = {
+      'User-Agent': config.userAgent
+    };
+
+    if (targetHostname === 'doubanio.com' || targetHostname.endsWith('.doubanio.com')) {
+      requestHeaders.Referer = 'https://movie.douban.com/';
+    }
     
     const makeRequest = async () => {
       try {
@@ -183,9 +199,7 @@ app.get('/proxy/:encodedUrl', async (req, res) => {
           url: targetUrl,
           responseType: 'stream',
           timeout: config.timeout,
-          headers: {
-            'User-Agent': config.userAgent
-          }
+          headers: requestHeaders
         });
       } catch (error) {
         if (retries < maxRetries) {
@@ -221,6 +235,11 @@ app.get('/proxy/:encodedUrl', async (req, res) => {
     }
   }
 });
+
+// Serve opencc-js browser distribution from a dedicated route (never the full node_modules)
+app.use('/libs/opencc-js', express.static(path.join(__dirname, 'node_modules', 'opencc-js', 'dist', 'umd'), {
+  maxAge: config.cacheMaxAge
+}));
 
 app.use(express.static(path.join(__dirname), {
   maxAge: config.cacheMaxAge
